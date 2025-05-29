@@ -10,6 +10,7 @@
 #include <limits.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include<assert.h>
 
 #define ERROR_IF(cond,msg) \
     if (cond) { \
@@ -28,21 +29,18 @@ enum gateaway_function {
 	PUITS
 };
 enum transport_protocol {
-	UNDEFINED,
+	UNKNOWN,
 	UDP,
 	TCP
 };
 
 enum gateaway_function gf = UNDEFINED;
-enum transport_protocol protocol = UNDEFINED;
+enum transport_protocol protocol = UNKNOWN;
 int nb_message = -1; /* Nb de messages à envoyer ou à recevoir, par défaut : 10 en émission, infini en réception */
 int longueur = 30; 	//longueur = 30 octets par defaut pour puits et source
 
-struct hostent* hp;
 struct sockaddr_in dest_addr;
-//memset((char*)&dest_addr,0,sizeof(dest_addr));
 struct sockaddr_in local_addr;
-//memset((char*)&local_addr,0,sizeof(local_addr));
 
 
 void usage() {
@@ -58,7 +56,7 @@ options:
 -n ##
 */
 
-void affect_sockaddr(struct sockaddr_in* sockaddr, int port, char* dest_addr, struct hostent* hp){
+void affect_sockaddr(struct sockaddr_in* sockaddr, int port, char* dest_addr){
 	ERROR_IF(sockaddr == NULL, "sockaddr is NULL");
 	memset((char*)sockaddr, 0, sizeof(sockaddr));
 	sockaddr->sin_family = AF_INET;
@@ -67,18 +65,18 @@ void affect_sockaddr(struct sockaddr_in* sockaddr, int port, char* dest_addr, st
 		sockaddr->sin_addr.s_addr = INADDR_ANY;
 	}
 	else { // -> sockaddr destinataire
+		struct hostent* hp;
 		ERROR_IF(hp == NULL, "hostent is NULL");
 		struct in_addr addr;
 		int ret = inet_pton(AF_INET, dest_addr, &addr);
 		ERROR_IF(ret != 1, "Invalid IPv4 address format");
 		hp = gethostbyaddr(&addr, sizeof(addr), AF_INET);
 		ERROR_IF(hp == NULL, "hostent after gethostaddr is NULL");
-		memcpy((char*) sockaddr->sin_addr.s_addr, hp->h_addr_list[0], hp->h_length);
+		memcpy((char*) &sockaddr->sin_addr.s_addr, hp->h_addr_list[0], hp->h_length);
 	}
 }
 
-void main (int argc, char **argv) // "p:n:s:"
-{
+int main (int argc, char **argv){
 	int c;
 	extern char *optarg;
 	extern int optind;
@@ -119,16 +117,45 @@ void main (int argc, char **argv) // "p:n:s:"
 		exit(EXIT_FAILURE) ;
 	}
 
-	if(protocol == UNDEFINED)
+	if(protocol == UNKNOWN)
 		protocol = TCP;
 
-	
-	//tsock -p [-options] port
-	//tsock -s [-options] host port
 
-	if (gf == SOURCE){
-		if(protocol == TCP){
-			
+	if (protocol == UDP) {
+		if (gf == SOURCE) {
+			char* parsed_dest_addr = argv[optind];
+			int port = atoi(argv[optind + 1]);
+			printf("Addresse: %s\n", parsed_dest_addr);
+			printf("Port: %d\n", port);
+			int sock = socket(AF_INET, SOCK_DGRAM, 0);
+			ERROR_IF(sock == -1, "Error whilst creating socket");
+			affect_sockaddr(&dest_addr, htons(port), parsed_dest_addr);
+			int lg_dest_addr = sizeof(dest_addr);
+			char* msg = "message from local MKD";
+			int sent = sendto(sock, msg, strlen(msg), 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
+			ERROR_IF(sent == -1, "Unable to send message");
+		}
+		else {
+			int lg_adr_local = sizeof(local_addr);
+			int sock = socket(AF_INET, SOCK_DGRAM, 0);
+			ERROR_IF(sock == -1, "Error whilst creating local socket");
+			int port = atoi(argv[optind]);
+			affect_sockaddr(&local_addr, htons(port), NULL);
+			ERROR_IF(bind(sock, (struct sockaddr*) &local_addr, lg_adr_local) == -1, "Error whilst binding the local socket to the address");
+			char* recv_msg = malloc(23); // +1 for null-terminator
+			assert(recv_msg != NULL);
+			while (1) {
+				socklen_t addrlen = sizeof(dest_addr);
+				int recv = recvfrom(sock, recv_msg, longueur, 0, (struct sockaddr*) &dest_addr, &addrlen);
+				ERROR_IF(recv == -1, "Error receiving UDP message");
+				recv_msg[recv] = '\0'; 
+				if(strcmp("message from local MKD", recv_msg) == 0){
+					printf("Received message: %s\n", recv_msg);
+					break;
+				}
+				sleep(1);
+			}
+			free(recv_msg);
 		}
 	}
 	else {
@@ -141,6 +168,8 @@ void main (int argc, char **argv) // "p:n:s:"
 		else 
 			nb_message = INT_MAX;	
 	}
+
+	return 0;
 }
 
 
