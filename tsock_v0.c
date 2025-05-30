@@ -131,9 +131,16 @@ int main (int argc, char **argv){
 			ERROR_IF(sock == -1, "Error whilst creating socket");
 			affect_sockaddr(&dest_addr, htons(port), parsed_dest_addr);
 			int lg_dest_addr = sizeof(dest_addr);
-			char* msg = "message from local MKD";
-			int sent = sendto(sock, msg, strlen(msg), 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
+			char c;
+			printf("Please type 1 character and press ENTER: ");
+			int is_one = scanf(" %c",&c);
+			ERROR_IF(is_one != 1, "Error whilst scanning char");
+			char* msg = malloc(longueur);
+			ERROR_IF(msg == NULL, "Error whilst allocating mem" );
+			memset(msg, c, (size_t) longueur);
+			int sent = sendto(sock, msg, longueur, 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
 			ERROR_IF(sent == -1, "Unable to send message");
+			free(msg);
 		}
 		else {
 			int lg_adr_local = sizeof(local_addr);
@@ -142,14 +149,15 @@ int main (int argc, char **argv){
 			int port = atoi(argv[optind]);
 			affect_sockaddr(&local_addr, htons(port), NULL);
 			ERROR_IF(bind(sock, (struct sockaddr*) &local_addr, lg_adr_local) == -1, "Error whilst binding the local socket to the address");
-			char* recv_msg = malloc(23); // +1 for null-terminator
+			char* recv_msg = malloc(longueur + 1);
+			ERROR_IF(recv_msg == NULL, "Error whilst allocating mem" );
 			assert(recv_msg != NULL);
 			while (1) {
 				socklen_t addrlen = sizeof(dest_addr);
 				int recv = recvfrom(sock, recv_msg, longueur, 0, (struct sockaddr*) &dest_addr, &addrlen);
 				ERROR_IF(recv == -1, "Error receiving UDP message");
 				recv_msg[recv] = '\0'; 
-				if(strcmp("message from local MKD", recv_msg) == 0){
+				if(strlen(recv_msg) == longueur){
 					printf("Received message: %s\n", recv_msg);
 					break;
 				}
@@ -171,22 +179,3 @@ int main (int argc, char **argv){
 
 	return 0;
 }
-
-
-/*
-Ecrire une version v1 du programme tsock_v0.c :
--​ en ajoutant au programme la prise en compte de l’option -u ;
--​ basée sur l'utilisation du service fourni par UDP ;
--​ permettant l'échange de données de format le plus simple possible : chaînes de caractères de taille
-fixe construite et affichée à l’aide des fonctions suivantes :
-void construire_message(char *message, char motif, int lg) {
-int i;
-for (i=0;i<lg;i++) message[i] = motif;}.
-void afficher_message(char *message, int lg) {
-int i;
-printf("message construit : ");
-for (i=0;i<lg;i++) printf("%c", message[i]); printf("\n");}
-*/
-
-/*
-*/
