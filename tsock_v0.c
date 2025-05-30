@@ -11,6 +11,7 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include<assert.h>
+#include <sys/time.h>
 
 #define ERROR_IF(cond,msg) \
     if (cond) { \
@@ -141,6 +142,7 @@ int main (int argc, char **argv){
 			int sent = sendto(sock, msg, longueur, 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
 			ERROR_IF(sent == -1, "Unable to send message");
 			free(msg);
+			close(sock);
 		}
 		else {
 			int lg_adr_local = sizeof(local_addr);
@@ -152,22 +154,31 @@ int main (int argc, char **argv){
 			char* recv_msg = malloc(longueur + 1);
 			ERROR_IF(recv_msg == NULL, "Error whilst allocating mem" );
 			assert(recv_msg != NULL);
+			struct timeval tv;
+			tv.tv_sec = 0; // for non-blocking mode
+			setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 			while (1) {
 				socklen_t addrlen = sizeof(dest_addr);
 				int recv = recvfrom(sock, recv_msg, longueur, 0, (struct sockaddr*) &dest_addr, &addrlen);
-				ERROR_IF(recv == -1, "Error receiving UDP message");
 				recv_msg[recv] = '\0'; 
 				if(strlen(recv_msg) == longueur){
 					printf("Received message: %s\n", recv_msg);
 					break;
 				}
+				printf("Waiting for a message...\n");
 				sleep(1);
 			}
 			free(recv_msg);
+			close(sock);
 		}
 	}
 	else {
-		
+		if(gf == SOURCE) {
+
+		}
+		else {
+			
+		}
 	}
 
 	if (nb_message == -1) {
