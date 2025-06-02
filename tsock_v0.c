@@ -43,8 +43,11 @@ int longueur = 30; 	//longueur = 30 octets par defaut pour puits et source
 
 struct sockaddr_in dest_addr;
 struct sockaddr_in local_addr;
-int lg_dest_addr = sizeof(dest_addr);
-int lg_adr_local = sizeof(local_addr);
+socklen_t lg_dest_addr = sizeof(dest_addr);
+socklen_t lg_adr_local = sizeof(local_addr);
+
+int port;
+char* parsed_dest_addr;
 
 struct timeval tv;
 
@@ -62,6 +65,17 @@ options:
 -l ##
 -n ##
 */
+
+char* prompt_and_build_message(int longueur) {
+    char c;
+    printf("Please type 1 character and press ENTER: ");
+    int is_one = scanf(" %c", &c);
+    ERROR_IF(is_one != 1, "Error whilst scanning char");
+    char* msg = malloc(longueur);
+    ERROR_IF(msg == NULL, "Error whilst allocating mem");
+    memset(msg, c, (size_t)longueur);
+    return msg;
+}
 
 void affect_sockaddr(struct sockaddr_in* sockaddr, int port, char* dest_addr){
 	ERROR_IF(sockaddr == NULL, "sockaddr is NULL");
@@ -83,7 +97,18 @@ void affect_sockaddr(struct sockaddr_in* sockaddr, int port, char* dest_addr){
 	}
 }
 
+void affect_ip_components(char* parsed_dest_addr, int* port, char* argument1, char* argument2){
+	if(argument1 == NULL)
+		parsed_dest_addr = NULL;
+	else 
+		parsed_dest_addr = argument1;
+	*port = atoi(argument2);
+	printf("Address: %s\n", parsed_dest_addr);
+	printf("Port: %d\n", *port);
+}
+
 int main (int argc, char **argv){
+	tv.tv_sec = 0; 
 	signal(SIGCHLD, SIG_IGN);
 	int c;
 	extern char *optarg;
@@ -131,20 +156,11 @@ int main (int argc, char **argv){
 
 	if (protocol == UDP) {
 		if (gf == SOURCE) {
-			char* parsed_dest_addr = argv[optind];
-			int port = atoi(argv[optind + 1]);
-			printf("Addresse: %s\n", parsed_dest_addr);
-			printf("Port: %d\n", port);
 			int sock = socket(AF_INET, SOCK_DGRAM, 0);
 			ERROR_IF(sock == -1, "Error whilst creating socket");
+			affect_ip_components(parsed_dest_addr, &port, argv[optind], argv[optind + 1]);
 			affect_sockaddr(&dest_addr, htons(port), parsed_dest_addr);
-			char c;
-			printf("Please type 1 character and press ENTER: ");
-			int is_one = scanf(" %c",&c);
-			ERROR_IF(is_one != 1, "Error whilst scanning char");
-			char* msg = malloc(longueur);
-			ERROR_IF(msg == NULL, "Error whilst allocating mem" );
-			memset(msg, c, (size_t) longueur);
+			char* msg = prompt_and_build_message(longueur);
 			int sent = sendto(sock, msg, longueur, 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
 			ERROR_IF(sent == -1, "Unable to send message");
 			free(msg);
@@ -153,16 +169,14 @@ int main (int argc, char **argv){
 		else {
 			int sock = socket(AF_INET, SOCK_DGRAM, 0);
 			ERROR_IF(sock == -1, "Error whilst creating local socket");
-			int port = atoi(argv[optind]);
+			affect_ip_components(parsed_dest_addr, &port, NULL, argv[optind]);
 			affect_sockaddr(&local_addr, htons(port), NULL);
 			ERROR_IF(bind(sock, (struct sockaddr*) &local_addr, lg_adr_local) == -1, "Error whilst binding the local socket to the address");
 			char* recv_msg = malloc(longueur + 1);
 			ERROR_IF(recv_msg == NULL, "Error whilst allocating mem" );
-			tv.tv_sec = 0; 
 			setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 			while (1) {
-				socklen_t addrlen = sizeof(dest_addr);
-				int recv = recvfrom(sock, recv_msg, longueur, 0, (struct sockaddr*) &dest_addr, &addrlen);
+				int recv = recvfrom(sock, recv_msg, longueur, 0, (struct sockaddr*) &dest_addr, &lg_dest_addr);
 				recv_msg[recv] = '\0'; 
 				if(strlen(recv_msg) == longueur){
 					printf("Received message: %s\n", recv_msg);
@@ -177,22 +191,13 @@ int main (int argc, char **argv){
 	}
 	else {
 		if(gf == SOURCE) {
-			char* parsed_dest_addr = argv[optind];
-			int port = atoi(argv[optind + 1]);
-			printf("Addresse: %s\n", parsed_dest_addr);
-			printf("Port: %d\n", port);
+			affect_ip_components(parsed_dest_addr, &port, argv[optind], argv[optind + 1]);
 			int sock = socket(AF_INET, SOCK_STREAM, 0);
 			ERROR_IF(sock == -1, "Error whilst creating socket");
 			affect_sockaddr(&dest_addr, htons(port), parsed_dest_addr);
 			int conn = connect(sock, (struct sockaddr*) &dest_addr, sizeof(dest_addr));
 			ERROR_IF(conn == -1, "Can't connect to server");
-			char c;
-			printf("Please type 1 character and press ENTER: ");
-			int is_one = scanf(" %c",&c);
-			ERROR_IF(is_one != 1, "Error whilst scanning char");
-			char* msg = malloc(longueur);
-			ERROR_IF(msg == NULL, "Error whilst allocating mem" );
-			memset(msg, c, (size_t) longueur);
+			char* msg = prompt_and_build_message(longueur);
 			int sent = write(sock, msg, longueur);
 			ERROR_IF(sent == -1, "Unable to send message");
 			free(msg);
@@ -203,15 +208,13 @@ int main (int argc, char **argv){
 		else {
 			int sock, sock_bis;
 			sock =  socket(AF_INET, SOCK_STREAM, 0);
-			int port = atoi(argv[optind]);
+			affect_ip_components(parsed_dest_addr, &port, NULL, argv[optind]);
 			affect_sockaddr(&local_addr, htons(port), NULL);
 			ERROR_IF(bind(sock, (struct sockaddr*) &local_addr, lg_adr_local) == -1, "Error whilst binding the local socket to the address");
 			listen(sock, 1);
-			tv.tv_sec = 0; 
 			while(1){
 				printf("Waiting for a new connection...\n");
-				socklen_t addrlen = sizeof(dest_addr);
-				sock_bis = accept(sock, (struct sockaddr*) &dest_addr, &addrlen);
+				sock_bis = accept(sock, (struct sockaddr*) &dest_addr, &lg_dest_addr);
 				ERROR_IF(sock_bis == -1, "Error whilst accepting new connection");
 				switch(fork()){
 					case -1:
