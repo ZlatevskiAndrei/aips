@@ -38,14 +38,17 @@ enum transport_protocol {
 
 enum gateaway_function gf = UNDEFINED;
 enum transport_protocol protocol = UNKNOWN;
-int nb_message = -1; /* Nb de messages à envoyer ou à recevoir, par défaut : 10 en émission, infini en réception */
-int longueur = 30; 	//longueur = 30 octets par defaut pour puits et source
+int nb_message = -1; 
+int longueur = 30; 	
 
 struct sockaddr_in dest_addr;
 struct sockaddr_in local_addr;
 socklen_t lg_dest_addr = sizeof(dest_addr);
 socklen_t lg_adr_local = sizeof(local_addr);
-
+char alphabet[] = {
+    'a','b','c','d','e','f','g','h','i','j','k','l','m',
+    'n','o','p','q','r','s','t','u','v','w','x','y','z'
+};
 int port;
 char* parsed_dest_addr;
 
@@ -57,14 +60,15 @@ void usage() {
 	printf("usage: cmd [-p|-s][-n ##]\n");
 }
 
-//tsock -p [-options] port
-//tsock -s [-options] host port
-/*
-options: 
--u UDP
--l ##
--n ##
-*/
+int count_digits(int num){
+	if(num == 0) return 1;
+	int digits = 0;
+	while(num != 0){
+		digits++;
+		num /= 10;
+	}
+	return digits;
+}
 
 char* prompt_and_build_message(int longueur) {
     char c;
@@ -82,10 +86,10 @@ void affect_sockaddr(struct sockaddr_in* sockaddr, int port, char* dest_addr){
 	memset((char*)sockaddr, 0, sizeof(sockaddr));
 	sockaddr->sin_family = AF_INET;
 	sockaddr->sin_port = port;
-	if(dest_addr == NULL){ // -> sockaddr local
+	if(dest_addr == NULL){ 
 		sockaddr->sin_addr.s_addr = INADDR_ANY;
 	}
-	else { // -> sockaddr destinataire
+	else { 
 		struct hostent* hp;
 		ERROR_IF(hp == NULL, "hostent is NULL");
 		struct in_addr addr;
@@ -97,14 +101,17 @@ void affect_sockaddr(struct sockaddr_in* sockaddr, int port, char* dest_addr){
 	}
 }
 
-void affect_ip_components(char* parsed_dest_addr, int* port, char* argument1, char* argument2){
-	if(argument1 == NULL)
-		parsed_dest_addr = NULL;
-	else 
-		parsed_dest_addr = argument1;
-	*port = atoi(argument2);
-	printf("Address: %s\n", parsed_dest_addr);
-	printf("Port: %d\n", *port);
+void affect_ip_components(char **parsed_dest_addr, int* port, char* argument1, char* argument2){
+    if(argument1 == NULL)
+        *parsed_dest_addr = NULL;
+    else {
+        *parsed_dest_addr = malloc(strlen(argument1) + 1);
+        ERROR_IF(*parsed_dest_addr == NULL, "Error allocating memory for dest addr");
+        strcpy(*parsed_dest_addr, argument1);
+    }
+    *port = atoi(argument2);
+    printf("Address: %s\n", *parsed_dest_addr);
+    printf("Port: %d\n", *port);
 }
 
 int main (int argc, char **argv){
@@ -139,6 +146,10 @@ int main (int argc, char **argv){
 			nb_message = atoi(optarg);
 			break;
 
+		case 'l':
+			longueur = atoi(optarg);
+			break;
+
 		default:
 			usage();
 			break;
@@ -150,6 +161,13 @@ int main (int argc, char **argv){
 		exit(EXIT_FAILURE) ;
 	}
 
+	if (nb_message == -1) {
+		if (gf == SOURCE)
+			nb_message = 10;
+		else 
+			nb_message = INT_MAX;	
+	}
+
 	if(protocol == UNKNOWN)
 		protocol = TCP;
 
@@ -158,40 +176,56 @@ int main (int argc, char **argv){
 		if (gf == SOURCE) {
 			int sock = socket(AF_INET, SOCK_DGRAM, 0);
 			ERROR_IF(sock == -1, "Error whilst creating socket");
-			affect_ip_components(parsed_dest_addr, &port, argv[optind], argv[optind + 1]);
+			affect_ip_components(&parsed_dest_addr, &port, argv[optind], argv[optind + 1]);
+			printf("SOURCE: size_msg= %d, port=%d, nb_messages=%d, TP=%d, dest=%s\n", longueur, port, nb_message, protocol, parsed_dest_addr);
 			affect_sockaddr(&dest_addr, htons(port), parsed_dest_addr);
-			char* msg = prompt_and_build_message(longueur);
-			int sent = sendto(sock, msg, longueur, 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
-			ERROR_IF(sent == -1, "Unable to send message");
+			char* msg = malloc(longueur);
+			ERROR_IF(msg == NULL, "Can't allocate mem");
+			for (int i = 1; i <= nb_message; i++) {
+				int num_dashes = 5 - count_digits(i);
+				if (num_dashes < 0 || i > 99999) {
+					printf("Limit amount of messages sent exceeded, exiting...\n");
+					exit(EXIT_FAILURE);
+				}
+				memset(msg, '-', num_dashes); 
+				int n = snprintf(msg + num_dashes, longueur - num_dashes, "%d", i); 
+				char fill_char = alphabet[(i-1) % 26];
+				int fill_start = num_dashes + n;
+				if (fill_start < longueur) {
+					memset(msg + fill_start, fill_char, longueur - fill_start);
+				}
+				int sent = sendto(sock, msg, longueur, 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
+				ERROR_IF(sent == -1, "Unable to send message");
+				printf("SOURCE: Message #%d (%d) [%.*s]\n", i, longueur, longueur, msg);
+			}
+			printf("End\n");
 			free(msg);
+			free(parsed_dest_addr);
 			close(sock);
 		}
 		else {
 			int sock = socket(AF_INET, SOCK_DGRAM, 0);
 			ERROR_IF(sock == -1, "Error whilst creating local socket");
-			affect_ip_components(parsed_dest_addr, &port, NULL, argv[optind]);
+			affect_ip_components(&parsed_dest_addr, &port, NULL, argv[optind]);
 			affect_sockaddr(&local_addr, htons(port), NULL);
 			ERROR_IF(bind(sock, (struct sockaddr*) &local_addr, lg_adr_local) == -1, "Error whilst binding the local socket to the address");
 			char* recv_msg = malloc(longueur + 1);
 			ERROR_IF(recv_msg == NULL, "Error whilst allocating mem" );
 			setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-			while (1) {
+			printf("SOURCE: size_msg=%d, port=%d, nb_messages_allowed=%d, TP=%d\n", longueur, port, nb_message, protocol);
+			for (int i = 1; i <= nb_message; i++) {
 				int recv = recvfrom(sock, recv_msg, longueur, 0, (struct sockaddr*) &dest_addr, &lg_dest_addr);
 				recv_msg[recv] = '\0'; 
-				if(strlen(recv_msg) == longueur){
-					printf("Received message: %s\n", recv_msg);
-					break;
-				}
-				printf("Waiting for a message...\n");
-				sleep(1);
+				printf("PUITS: Received message #%d (%d) [%.*s]\n", i, longueur, longueur, recv_msg);
 			}
 			free(recv_msg);
+			free(parsed_dest_addr);
 			close(sock);
 		}
 	}
 	else {
 		if(gf == SOURCE) {
-			affect_ip_components(parsed_dest_addr, &port, argv[optind], argv[optind + 1]);
+			affect_ip_components(&parsed_dest_addr, &port, argv[optind], argv[optind + 1]);
 			int sock = socket(AF_INET, SOCK_STREAM, 0);
 			ERROR_IF(sock == -1, "Error whilst creating socket");
 			affect_sockaddr(&dest_addr, htons(port), parsed_dest_addr);
@@ -208,7 +242,7 @@ int main (int argc, char **argv){
 		else {
 			int sock, sock_bis;
 			sock =  socket(AF_INET, SOCK_STREAM, 0);
-			affect_ip_components(parsed_dest_addr, &port, NULL, argv[optind]);
+			affect_ip_components(&parsed_dest_addr, &port, NULL, argv[optind]);
 			affect_sockaddr(&local_addr, htons(port), NULL);
 			ERROR_IF(bind(sock, (struct sockaddr*) &local_addr, lg_adr_local) == -1, "Error whilst binding the local socket to the address");
 			listen(sock, 1);
@@ -250,13 +284,6 @@ int main (int argc, char **argv){
 				}
 			}
 		}
-	}
-
-	if (nb_message == -1) {
-		if (gf == SOURCE)
-			nb_message = 10;
-		else 
-			nb_message = INT_MAX;	
 	}
 
 	return 0;
