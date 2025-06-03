@@ -52,10 +52,6 @@ char alphabet[] = {
 int port;
 char* parsed_dest_addr;
 
-struct timeval tv;
-
-
-
 void usage() {
 	printf("usage: cmd [-p|-s][-n ##]\n");
 }
@@ -114,8 +110,61 @@ void affect_ip_components(char **parsed_dest_addr, int* port, char* argument1, c
     printf("Port: %d\n", *port);
 }
 
+void send_messages(enum transport_protocol protocol, int sock){
+	printf("SOURCE: size_msg= %d, port=%d, nb_messages=%d, TP=%d, dest=%s\n", longueur, port, nb_message, protocol, parsed_dest_addr);
+	char* msg = malloc(longueur);
+	ERROR_IF(msg == NULL, "Can't allocate mem");
+	for (int i = 1; i <= nb_message; i++) {
+		int num_dashes = 5 - count_digits(i);
+		if (num_dashes < 0 || i > 99999) {
+			fprintf(stderr, "Limit amount of messages sent exceeded, exiting...\n");
+			exit(EXIT_FAILURE);
+		}
+		memset(msg, '-', num_dashes); 
+		int n = snprintf(msg + num_dashes, longueur - num_dashes, "%d", i); 
+		char fill_char = alphabet[(i-1) % 26];
+		int fill_start = num_dashes + n;
+		if (fill_start < longueur) {
+			memset(msg + fill_start, fill_char, longueur - fill_start);
+		}
+		int sent;
+		if(protocol == UDP){
+			sent = sendto(sock, msg, longueur, 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
+		}
+		else {
+			sent = write(sock, msg, longueur);
+		}
+		ERROR_IF(sent == -1, "Unable to send message");
+		printf("SOURCE: Message #%d (%d) [%.*s]\n", i, longueur, longueur, msg);
+	}
+	printf("End\n");
+	free(msg);
+}
+
+void receive_messages(enum transport_protocol protocol, int sock){
+	char* recv_msg = malloc(longueur + 1);
+	ERROR_IF(recv_msg == NULL, "Error whilst allocating mem" );
+	printf("PUITS: size_msg=%d, port=%d, nb_messages_allowed=%d, TP=%d\n", longueur, port, nb_message, protocol);
+	for (int i = 1; i <= nb_message; i++) {
+		int recv;
+		if(protocol == TCP){
+			recv = read(sock, recv_msg, (size_t)longueur);
+			if (recv == 0) {
+            	printf("Client disconnected\n");
+            	break;
+        	}
+		}
+		else {
+			recv = recvfrom(sock, recv_msg, longueur, 0, (struct sockaddr*) &dest_addr, &lg_dest_addr);
+		}
+		ERROR_IF (recv == -1, "Error whilst reading data");
+		recv_msg[recv] = '\0'; 
+		printf("PUITS: Received message #%d (%d) [%.*s]\n", i, longueur, longueur, recv_msg);
+	}
+	free(recv_msg);
+}
+
 int main (int argc, char **argv){
-	tv.tv_sec = 0; 
 	signal(SIGCHLD, SIG_IGN);
 	int c;
 	extern char *optarg;
@@ -172,34 +221,13 @@ int main (int argc, char **argv){
 		protocol = TCP;
 
 
-	if (protocol == UDP) {
+	if (protocol == UDP) { 
 		if (gf == SOURCE) {
 			int sock = socket(AF_INET, SOCK_DGRAM, 0);
 			ERROR_IF(sock == -1, "Error whilst creating socket");
 			affect_ip_components(&parsed_dest_addr, &port, argv[optind], argv[optind + 1]);
-			printf("SOURCE: size_msg= %d, port=%d, nb_messages=%d, TP=%d, dest=%s\n", longueur, port, nb_message, protocol, parsed_dest_addr);
 			affect_sockaddr(&dest_addr, htons(port), parsed_dest_addr);
-			char* msg = malloc(longueur);
-			ERROR_IF(msg == NULL, "Can't allocate mem");
-			for (int i = 1; i <= nb_message; i++) {
-				int num_dashes = 5 - count_digits(i);
-				if (num_dashes < 0 || i > 99999) {
-					printf("Limit amount of messages sent exceeded, exiting...\n");
-					exit(EXIT_FAILURE);
-				}
-				memset(msg, '-', num_dashes); 
-				int n = snprintf(msg + num_dashes, longueur - num_dashes, "%d", i); 
-				char fill_char = alphabet[(i-1) % 26];
-				int fill_start = num_dashes + n;
-				if (fill_start < longueur) {
-					memset(msg + fill_start, fill_char, longueur - fill_start);
-				}
-				int sent = sendto(sock, msg, longueur, 0, (struct sockaddr*) &dest_addr, lg_dest_addr);
-				ERROR_IF(sent == -1, "Unable to send message");
-				printf("SOURCE: Message #%d (%d) [%.*s]\n", i, longueur, longueur, msg);
-			}
-			printf("End\n");
-			free(msg);
+			send_messages(protocol, sock);
 			free(parsed_dest_addr);
 			close(sock);
 		}
@@ -209,16 +237,7 @@ int main (int argc, char **argv){
 			affect_ip_components(&parsed_dest_addr, &port, NULL, argv[optind]);
 			affect_sockaddr(&local_addr, htons(port), NULL);
 			ERROR_IF(bind(sock, (struct sockaddr*) &local_addr, lg_adr_local) == -1, "Error whilst binding the local socket to the address");
-			char* recv_msg = malloc(longueur + 1);
-			ERROR_IF(recv_msg == NULL, "Error whilst allocating mem" );
-			setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-			printf("SOURCE: size_msg=%d, port=%d, nb_messages_allowed=%d, TP=%d\n", longueur, port, nb_message, protocol);
-			for (int i = 1; i <= nb_message; i++) {
-				int recv = recvfrom(sock, recv_msg, longueur, 0, (struct sockaddr*) &dest_addr, &lg_dest_addr);
-				recv_msg[recv] = '\0'; 
-				printf("PUITS: Received message #%d (%d) [%.*s]\n", i, longueur, longueur, recv_msg);
-			}
-			free(recv_msg);
+			receive_messages(protocol, sock);
 			free(parsed_dest_addr);
 			close(sock);
 		}
@@ -231,12 +250,10 @@ int main (int argc, char **argv){
 			affect_sockaddr(&dest_addr, htons(port), parsed_dest_addr);
 			int conn = connect(sock, (struct sockaddr*) &dest_addr, sizeof(dest_addr));
 			ERROR_IF(conn == -1, "Can't connect to server");
-			char* msg = prompt_and_build_message(longueur);
-			int sent = write(sock, msg, longueur);
-			ERROR_IF(sent == -1, "Unable to send message");
-			free(msg);
+			send_messages(protocol, sock);
 			int shutdown_ret = shutdown(sock, 2);
 			ERROR_IF(shutdown_ret == -1, "Can't shutdown connection");
+			free(parsed_dest_addr);
 			close(sock);
 		}
 		else {
@@ -257,34 +274,18 @@ int main (int argc, char **argv){
 					case 0:
 						close(sock);
 						pid_t process = getpid();
-						char* recv_msg = malloc(longueur + 1);
-						ERROR_IF(recv_msg == NULL, "Error whilst allocating mem" );
-						setsockopt(sock_bis, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-						while(1){
-							printf("Waiting a message for process %d\n", (int)process);
-							int recv = read(sock_bis, recv_msg, (size_t)longueur);
-							if (recv == 0) {
-            					printf("Client disconnected\n");
-            					break;
-        					}
-							ERROR_IF (recv == -1, "Error whilst reading TCP data");
-							recv_msg[recv] = '\0'; 
-							if(strlen(recv_msg) == longueur){
-								printf("Received message: %s\n", recv_msg);
-								break;
-							}
-						}
+						printf("We are in child process with PID %d\n", process);
+						receive_messages(protocol, sock_bis);
+						free(parsed_dest_addr);
 						int shutdown_ret = shutdown(sock_bis, 2);
-						close(sock_bis);
 						ERROR_IF(shutdown_ret == -1, "Error whilst disconnecting");
-						free(recv_msg);
-						exit(EXIT_SUCCESS);
+						close(sock_bis);
+						exit(EXIT_SUCCESS);	
 					default:
 						close(sock_bis);
 				}
 			}
 		}
 	}
-
 	return 0;
 }
